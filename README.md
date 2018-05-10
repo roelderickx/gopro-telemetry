@@ -11,13 +11,13 @@ Installation and configuration of these requirements can be found on their respe
 
 Usage is very simple, as this is the initial version there is not so much to configure:
 
-Usage: ./gpt.py [OPTION]... inputfile
+`Usage: gpt.py \[OPTION\]... inputfile
 
   -o --overwrite      Overwrite generated files (default = no)
   -v --verbose        Display extra information while processing
   -vv                 Display extra information including output of subprocesses
                                          (ffmpeg and gopro2json)
-  -h --help           Display help and exit
+  -h --help           Display help and exit`
 
 ## Limitations
 
