@@ -17,10 +17,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sys, os, getopt, subprocess, json
-from PIL import Image
-from PIL import ImageFont
-from PIL import ImageDraw
-
 
 class Parameters:
     def __init__(self):
@@ -87,7 +83,7 @@ class GlobalVariablesFunctions:
         self.__gopro2jsonexe = ""
         # self.__gopro2gpxexe = ""
         self.__framerate = -1
-        self.__number_frames = -1
+        self.__duration = -1
         self.__video_width = -1
         self.__video_height = -1
 
@@ -177,19 +173,19 @@ class GlobalVariablesFunctions:
         return self.__framerate
         
 
-    def parse_number_frames(self, instring):
+    def parse_duration(self, instring):
         # get the part behind =
-        nbframes = instring.split('=')[1]
+        duration = instring.split('=')[1]
         # strip the quotes
-        nbframes = nbframes.replace('"', '').strip()
-        self.__number_frames = int(nbframes)
-        self.log("Detected number of frames = " + str(self.__number_frames))
+        duration = duration.replace('"', '').strip()
+        self.__duration = float(duration)
+        self.log("Detected duration = " + str(self.__duration))
 
 
-    def get_number_frames(self):
-        if self.__number_frames == -1:
-            raise ValueError("Number of frames is not yet loaded")
-        return self.__number_frames
+    def get_duration(self):
+        if self.__duration == -1:
+            raise ValueError("Duration is not yet loaded")
+        return self.__duration
         
 
     def parse_video_width(self, instring):
@@ -320,15 +316,15 @@ class Validator:
             "-v", str(self.gvf.ffmpeg_verbosity()),
             "-select_streams", "v:0",
             "-print_format", "flat",
-            "-show_entries", "stream=r_frame_rate,nb_frames,width,height"])
+            "-show_entries", "stream=r_frame_rate,duration,width,height"])
         
         if retval:
             outlist = str(output).split("\n")
             for prop in outlist:
                 if "r_frame_rate" in prop:
                     self.gvf.parse_framerate(prop)
-                elif "nb_frames" in prop:
-                    self.gvf.parse_number_frames(prop)
+                elif "duration" in prop:
+                    self.gvf.parse_duration(prop)
                 elif "width" in prop:
                     self.gvf.parse_video_width(prop)
                 elif "height" in prop:
@@ -372,221 +368,155 @@ class Validator:
 
 
 class Telemetry:
+    POS_TOP_LEFT = 1
+    POS_TOP_RIGHT = 2
+    POS_BOTTOM_LEFT = 3
+    POS_BOTTOM_RIGHT = 4
+
     def __init__(self, gvf):
         self.gvf = gvf
         self.telemetryfile = self.gvf.params.filename + ".telemetry.bin"
         self.telemetryjsonfile = self.gvf.params.filename + ".telemetry.json"
+        self.telemetrycmdfile = self.gvf.params.filename + ".telemetry.cmd"
         self.jsondata = []
 
 
-    def fetch_telemetry(self):
-        self.gvf.log("Fetching telemetry")
+    def __get_telemetry_stream_number(self):
+        self.gvf.log("Fetching telemetry data stream number")
         
-        retval = True
-        if self.gvf.params.overwrite or not os.path.exists(self.telemetryfile):
-            retval, output = self.gvf.run_command([
-                self.gvf.get_ffprobe_executable(),
-                self.gvf.params.filename,
-                "-v", str(self.gvf.ffmpeg_verbosity()),
-                "-print_format", "flat",
-                "-show_entries", "stream=codec_tag_string"])
-        else:
-            self.gvf.log("Telemetry file exists already, skipping")
+        retval, output = self.gvf.run_command([
+            self.gvf.get_ffprobe_executable(),
+            self.gvf.params.filename,
+            "-v", str(self.gvf.ffmpeg_verbosity()),
+            "-print_format", "flat",
+            "-show_entries", "stream=codec_tag_string"])
         
-        if retval and (self.gvf.params.overwrite or not os.path.exists(self.telemetryfile)):
+        if retval:
             streamlist = str(output).split('\n')
             gpmdstreamlist = [s for s in streamlist if "gpmd" in s]
             gpmdstream = gpmdstreamlist[0].split('.codec')[0][-1]
             
             self.gvf.log("Telemetry found at stream 0:" + gpmdstream)
-            
-            retval, output = self.gvf.run_command([
-                self.gvf.get_ffmpeg_executable(),
-                "-v", str(self.gvf.ffmpeg_verbosity()),
-                "-y",
-                "-i", self.gvf.params.filename,
-                "-codec", "copy",
-                "-map", "0:" + gpmdstream,
-                "-f", "rawvideo",
-                self.telemetryfile])
-            
-        if retval:
-            self.gvf.log("Converting telemetry to json format")
-
-            if self.gvf.params.overwrite or not os.path.exists(self.telemetryjsonfile):
-                retval, output = self.gvf.run_command([
-                    self.gvf.get_gopro2json_executable(),
-                    "-i", self.telemetryfile,
-                    "-o", self.telemetryjsonfile])
-            else:
-                self.gvf.log("Telemetry json file exists already, skipping")
-    
-        if retval:
-            self.gvf.log("Parsing telemetry json")
-            
-            try:
-                with open(self.telemetryjsonfile) as f:
-                    self.jsondata = json.load(f)
-                    self.gvf.log("Parsing succeeded")
-            except json.decoder.JSONDecodeError as e:
-                self.gvf.log("Parsing failed, error = " + e.msg)
-                retval = False
-
-        return retval
-
-
-    # This is not exact science: timing of video and telemetry is not on the same crystal
-    # see https://github.com/gopro/gpmf-parser chapter "GPMF Timing and Clocks"
-    def __get_data_frame(self, framenumber):
-        vid_frames_per_tel_frames = \
-                self.gvf.get_number_frames() / (len(self.jsondata['data']) - 1)
-        return round(framenumber / vid_frames_per_tel_frames)
-    
-    
-    def get_speed_km_h(self, framenumber):
-        dataframe = self.__get_data_frame(framenumber)
-        speed_m_s = float(self.jsondata['data'][dataframe]['spd'])
-        speed_km_h = speed_m_s * 3.6
-        return speed_km_h
-
-
-class Audio:
-    def __init__(self, gvf):
-        self.gvf = gvf
-        self.audiofile = self.gvf.params.filename + ".audio.bin"
-
-
-    def fetch_audio(self):
-        self.gvf.log("Fetching audio")
         
-        retval = True
-        if self.gvf.params.overwrite or not os.path.exists(self.audiofile):
-            retval, output = self.gvf.run_command([
-                self.gvf.get_ffmpeg_executable(),
-                "-v", str(self.gvf.ffmpeg_verbosity()),
-                "-y",
-                "-i", self.gvf.params.filename,
-                "-codec", "copy",
-                "-map", "a:0",
-                "-f", "adts",
-                self.audiofile])
+            return retval, gpmdstream
         else:
-            self.gvf.log("Audio file exists already, skipping")
+            self.gvf.log("Telemetry stream number not found")
+            
+            return retval, None
+
+    
+    def __fetch_telemetry_stream(self, gpmdstream):
+        self.gvf.log("Fetching telemetry data stream to " + self.telemetryfile)
         
-        return retval
-
-
-class Video:
-    def __init__(self, gvf):
-        self.gvf = gvf
-        self.videodir = self.gvf.params.filename + "_images"
-
-
-    def fetch_video(self):
-        self.gvf.log("Fetching video as frames to subdirectory " + self.videodir)
-        
-        if not os.path.exists(self.videodir):
-            self.gvf.log("Directory " + self.videodir + " created")
-            os.makedirs(self.videodir)
-        else:
-            self.gvf.log("Directory " + self.videodir + " already exists")
-        
-        # TODO: implement overwrite / skip based on parameter
         retval, output = self.gvf.run_command([
             self.gvf.get_ffmpeg_executable(),
             "-v", str(self.gvf.ffmpeg_verbosity()),
             "-y",
             "-i", self.gvf.params.filename,
-            self.videodir + "/%06d.png"])
+            "-codec", "copy",
+            "-map", "0:" + gpmdstream,
+            "-f", "rawvideo",
+            self.telemetryfile])
+        
+        return retval
+    
+    
+    def __convert_telemetry_to_json(self):
+        self.gvf.log("Converting telemetry to json format")
+
+        retval = True
+        retval, output = self.gvf.run_command([
+            self.gvf.get_gopro2json_executable(),
+            "-i", self.telemetryfile,
+            "-o", self.telemetryjsonfile])
         
         return retval
 
 
-class Renderer:
-    POS_TOP_LEFT = 1
-    POS_TOP_RIGHT = 2
-    POS_BOTTOM_LEFT = 3
-    POS_BOTTOM_RIGHT = 4
+    def __dump_ffmpeg_command_file(self):
+        self.gvf.log("Parsing telemetry json")
+
+        retval = True
+        try:
+            with open(self.telemetryjsonfile) as f:
+                self.jsondata = json.load(f)
+                self.gvf.log("Parsing succeeded")
+        except json.decoder.JSONDecodeError as e:
+            self.gvf.log("Parsing failed, error = " + e.msg)
+            retval = False
     
-    def __init__(self, gvf, telemetry, audio, video):
+        if retval:
+            self.gvf.log("Converting json to ffmpeg command file")
+            text_file = open(self.telemetrycmdfile, "w")
+            interval_dataframe = self.gvf.get_duration() / len(self.jsondata['data'])
+            start_time = 0
+            for telemetrydata in self.jsondata['data']:
+                # last record seems to crash ffmpeg
+                # TODO investigate!
+                if telemetrydata != self.jsondata['data'][-1]:
+                    text = "Speed\\ {0:.1f}".format(float(telemetrydata['spd']) * 3.6)
+                    text_file.write("{0:.3f}-{1:.3f} [enter] drawtext reinit 'text={2}:x=W-tw-10:y=H-th-10;\n\n".format(start_time, start_time + interval_dataframe, text))
+                    start_time += interval_dataframe
+            text_file.close()
+        
+        return retval
+    
+    
+    def fetch_telemetry(self):
+        self.gvf.log("Fetching telemetry")
+        
+        retval = True
+        if not self.gvf.params.overwrite and os.path.exists(self.telemetryfile):
+            self.gvf.log("Telemetry file exists already, skipping")
+        else:
+            retval, gpmdstream = self.__get_telemetry_stream_number()
+
+            if retval:
+                retval = self.__fetch_telemetry_stream(gpmdstream)
+            
+        if not self.gvf.params.overwrite and os.path.exists(self.telemetryjsonfile):
+            self.gvf.log("Telemetry json file exists already, skipping")
+        elif retval:
+            retval = self.__convert_telemetry_to_json()
+        
+        if not self.gvf.params.overwrite and os.path.exists(self.telemetrycmdfile):
+            self.gvf.log("Telemetry cmd file exists already, skipping")
+        elif retval:
+            retval = self.__dump_ffmpeg_command_file()
+
+        return retval
+
+
+class Renderer:
+    def __init__(self, gvf, telemetry):
         self.gvf = gvf
         self.telemetry = telemetry
-        self.audio = audio
-        self.video = video
-        self.font = ImageFont.truetype("/usr/share/fonts/TTF/DejaVuSans.ttf", 72)
-    
-    
-    def __draw_text(self, draw, position, text):
-        w, h = draw.textsize(text, font=self.font)
-        if position == Renderer.POS_TOP_LEFT:
-            x = 10
-            y = 10
-        elif position == Renderer.POS_TOP_RIGHT:
-            x = self.gvf.get_video_width() - w - 10
-            y = 10
-        elif position == Renderer.POS_BOTTOM_LEFT:
-            x = 10
-            y = self.gvf.get_video_height() - h - 10
-        elif position == Renderer.POS_BOTTOM_RIGHT:
-            x = self.gvf.get_video_width() - w - 10
-            y = self.gvf.get_video_height() - h - 10
+
+    def rerender_video_file(self):
+        self.gvf.log("Rendering telemetry data on video stream")
         
-        # thin border
-        draw.text((x-1, y), text, font=self.font, fill=(0,0,0))
-        draw.text((x+1, y), text, font=self.font, fill=(0,0,0))
-        draw.text((x, y-1), text, font=self.font, fill=(0,0,0))
-        draw.text((x, y+1), text, font=self.font, fill=(0,0,0))
-
-        # thicker border
-        #draw.text((x-1, y-1), text, font=self.font, fill=shadowcolor)
-        #draw.text((x+1, y-1), text, font=self.font, fill=shadowcolor)
-        #draw.text((x-1, y+1), text, font=self.font, fill=shadowcolor)
-        #draw.text((x+1, y+1), text, font=self.font, fill=shadowcolor)
-
-        # now draw the text over it
-        draw.text((x, y), text, font=self.font, fill=(255,255,255))
-
-    
-    def __add_telemetry_data_file(self, dirpath, filename):
-        self.gvf.log("Adding telemetry data: process file " + filename)
-        
-        fullfilename = os.path.join(dirpath, filename)
-        
-        if self.gvf.params.overwrite or \
-           not os.path.exists(fullfilename.replace(".png", ".new.png")):
-            img = Image.open(fullfilename)
-            draw = ImageDraw.Draw(img)
-            
-            framenumber = int(filename.split('.png')[0])
-            speed = str("%.1f" % round(self.telemetry.get_speed_km_h(framenumber), 1))
-            self.__draw_text(draw, Renderer.POS_BOTTOM_RIGHT, speed)
-            
-            img.save(fullfilename.replace(".png", ".new.png"))
-        else:
-            self.gvf.log("already exists, skipping")
-
-
-    def add_telemetry_data(self):
-        self.gvf.log("Adding telemetry data: scanning files")
-        
-        for dirpath, dirnames, filenames in os.walk(self.video.videodir):
-            for name in filenames:
-                if "png" in name and not "new" in name:
-                    self.__add_telemetry_data_file(dirpath, name)
-
-
-    def reassemble_video_file(self):
         retval, output = self.gvf.run_command([
             self.gvf.get_ffmpeg_executable(),
             "-v", str(self.gvf.ffmpeg_verbosity()),
             "-y",
-            "-framerate", str(self.gvf.get_framerate()),
-            "-i", self.video.videodir + "/%06d.new.png",
-            "-i", self.audio.audiofile,
-            "-pix_fmt", "yuv420p",
+            "-i", self.gvf.params.filename,
             "-acodec", "copy",
-            "-bsf:a", "aac_adtstoasc",
+            "-vf", "sendcmd=f=" + self.gvf.params.filename + ".telemetry.cmd," + \
+                   "drawtext=text='':" + \
+                            "fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:" + \
+                            "fontsize=72:" + \
+                            "borderw=2:" + \
+                            "bordercolor=0x000000:" + \
+                            "fontcolor=0xFFFFFF",
             self.gvf.params.filename + ".rendered.mp4"])
+        
+        if retval:
+            self.gvf.log("Rendering successfull, output file = " + \
+                         self.gvf.params.filename + ".rendered.mp4")
+        else:
+            self.gvf.log("Rendering failed")
+        
+        return retval
 
 
 # MAIN
@@ -606,20 +536,8 @@ telemetry = Telemetry(gvf)
 if not telemetry.fetch_telemetry():
     sys.exit()
 
-# step 2: extract audio from inputfile
-audio = Audio(gvf)
-if not audio.fetch_audio():
+# step 2: render telemetry data on video stream
+renderer = Renderer(gvf, telemetry)
+if not renderer.rerender_video_file():
     sys.exit()
-
-# step 3: extract images from inputfile
-video = Video(gvf)
-if not video.fetch_video():
-    sys.exit()
-
-# step 4: render telemetry data on all images
-renderer = Renderer(gvf, telemetry, audio, video)
-renderer.add_telemetry_data()
-
-# step 5: reconstruct movie from audio and rendered images
-renderer.reassemble_video_file()
 
