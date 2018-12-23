@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<goprotelemetry>
+    <plugin>
+        <label>speed</label>
+        <enabled>true</enabled>
+        <pluginlib>gpt_plugin_speed</pluginlib>
+        <jsontag>spd</jsontag>
+        <position>
+            <horiz>left</horiz>
+            <vert>bottom</vert>
+        </position>
+        <params>
+            <type>text</type> <!-- or image -->
+            <unit>metric_speed</unit> <!-- or imperial_speed -->
+        </params>
+    </plugin>
+    <plugin>
+        <label>GPS location</label>
+        <enabled>false</enabled>
+        <pluginlib>gpt_plugin_gps_location</pluginlib>
+        <jsontag>lat,lon</jsontag>
+        <position>
+            <horiz>right</horiz>
+            <vert>bottom</vert>
+        </position>
+        <params>
+            <!-- to be determined -->
+        </params>
+    </plugin>
+    <plugin>
+        <label>altitude</label>
+        <enabled>true</enabled>
+        <pluginlib>gpt_plugin_altitude</pluginlib>
+        <jsontag>alt</jsontag>
+        <position>
+            <horiz>right</horiz>
+            <vert>center</vert>
+        </position>
+        <params>
+            <!-- to be determined -->
+        </params>
+    </plugin>
+    <plugin>
+        <label>temperature</label>
+        <enabled>true</enabled>
+        <pluginlib>gpt_plugin_temperature</pluginlib>
+        <jsontag>temp</jsontag>
+        <position>
+            <horiz>right</horiz>
+            <vert>top</vert>
+        </position>
+        <params>
+            <unit>temp_celcius</unit> <!-- or temp_fahrenheit -->
+        </params>
+    </plugin>
+    <plugin>
+        <label>date and time</label>
+        <enabled>true</enabled>
+        <pluginlib>gpt_plugin_datetime</pluginlib>
+        <jsontag>utc</jsontag>
+        <position>
+            <horiz>center</horiz>
+            <vert>bottom</vert>
+        </position>
+        <params>
+            <!-- to be determined -->
+        </params>
+    </plugin>
+</goprotelemetry>
+

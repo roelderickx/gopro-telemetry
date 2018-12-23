@@ -16,35 +16,36 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import sys, os, subprocess, json
-from ffmpeg import Logger
-from ffmpeg import VideoProperties
+import sys, os, json, subprocess, importlib
+from xml.dom import minidom
+from ffmpeg import FFmpegLogger
+from ffmpeg import FFmpegVideoProperties
 from ffmpeg import FFmpeg
+from gpt_plugin_parameters import PluginParameters
 
 class Telemetry:
-    POS_TOP_LEFT = 1
-    POS_TOP_CENTER = 2
-    POS_TOP_RIGHT = 3
-    POS_CENTER_LEFT = 4
-    POS_CENTER_CENTER = 5
-    POS_CENTER_RIGHT = 6
-    POS_BOTTOM_LEFT = 7
-    POS_BOTTOM_CENTER = 8
-    POS_BOTTOM_RIGHT = 9
-    
-    SPEED_TEXT = 0
-    SPEED_IMAGE = 1
-    
     def __init__(self, params, ffmpeg):
         self.logger = params.logger
+
+        self.__params = params
+        self.__ffmpeg = ffmpeg
 
         self.__gopro2jsonexe = ""
         self.__telemetryfile = params.filename + ".telemetry.bin"
         self.__telemetryjsonfile = params.filename + ".telemetry.json"
+        self.__outputfile = params.filename + ".rendered.mp4"
+        
+        self.__vp = None
+        self.__jsondata = []
 
-        self.__find_gopro2json_executable()
-        ffmpeg.fetch_telemetry_stream(params.filename, self.__telemetryfile, params.overwrite)
-        self.__convert_telemetry_to_json(params.overwrite)
+        self.initialized = \
+            self.__find_gopro2json_executable() and \
+            self.__ffmpeg.fetch_telemetry_stream(params.filename, \
+                                                 self.__telemetryfile, \
+                                                 params.overwrite) and \
+            self.__convert_telemetry_to_json(params.overwrite) and \
+            self.__fetch_videoproperties() and \
+            self.__parse_json()
 
 
     def __run_command(self, args):
@@ -59,7 +60,7 @@ class Telemetry:
             process.check_returncode()
             output = process.stdout
         except subprocess.CalledProcessError as e:
-            self.logger.log("Command failed, return code = " + str(e.returncode))
+            self.logger.error("Command failed, return code = " + str(e.returncode))
             retval = False
         
         return retval, output
@@ -78,7 +79,7 @@ class Telemetry:
         if retval:
             self.__set_gopro2json_executable(output)
         else:
-            self.logger.log("gopro2json not found")
+            self.logger.error("gopro2json not found")
         
         return retval
 
@@ -104,85 +105,120 @@ class Telemetry:
         return retval
 
 
-    def add_speed(self, position, speed_type):
-        pass
+    def __fetch_videoproperties(self):
+        retval, self.__vp = self.__ffmpeg.get_video_properties(self.__params.filename)
+        
+        return retval
 
 
-    def add_gps_location(self, position):
-        pass
-
-
-    def add_altitude(self, position):
-        pass
-
-
-    def add_temperature(self, position):
-        pass
-
-
-    def add_datetime(self, position):
-        pass
-
-
-    def generate_overlay(self):
-        pass
-'''
-    def __convert_json_to_ffmpeg_command(self, overwrite = False):
+    def __parse_json(self):
         self.logger.log("Parsing telemetry json")
 
         retval = True
-        if not overwrite and os.path.exists(outfilename):
-            self.logger.log("FFmpeg command file already exists, skipping")
-        else:
-            jsondata = []
-            try:
-                with open(self.__telemetryjsonfile) as f:
-                    jsondata = json.load(f)
-                    self.logger.log("Parsing succeeded")
-            except json.decoder.JSONDecodeError as e:
-                self.logger.log("Parsing failed, error = " + e.msg)
-                retval = False
-        
-            if retval:
-                self.logger.log("Converting json to ffmpeg command file")
-                text_file = open(self.__telemetrycmdfile, "w")
-                interval_dataframe = self.gvf.get_duration() / len(jsondata['data'])
-                start_time = 0
-                for telemetrydata in jsondata['data']:
-                    # last record seems to crash ffmpeg
-                    # TODO investigate!
-                    if telemetrydata != jsondata['data'][-1]:
-                        text = "Speed\\ {0:.1f}".format(float(telemetrydata['spd']) * 3.6)
-                        text_file.write("{0:.3f}-{1:.3f} [enter] drawtext reinit 'text={2}:x=W-tw-10:y=H-th-10;\n\n".format(start_time, start_time + interval_dataframe, text))
-                        start_time += interval_dataframe
-                text_file.close()
+        try:
+            with open(self.__telemetryjsonfile) as f:
+                self.__jsondata = json.load(f)
+                self.logger.log("Parsing succeeded")
+        except json.decoder.JSONDecodeError as e:
+            self.logger.error("Parsing failed, error = " + e.msg)
+            retval = False
         
         return retval
 
-    def rerender_video_file(self):
-        self.gvf.log("Rendering telemetry data on video stream")
+
+    def __get_unit_conversion(self, pluginparams):
+        conv_func = lambda x: x
         
-        retval, output = self.gvf.run_command([
-            self.gvf.get_ffmpeg_executable(),
-            "-v", str(self.gvf.ffmpeg_verbosity()),
-            "-y",
-            "-i", self.gvf.params.filename,
-            "-acodec", "copy",
-            "-vf", "sendcmd=f=" + self.gvf.params.filename + ".telemetry.cmd," + \
-                   "drawtext=text='':" + \
-                            "fontfile=/usr/share/fonts/TTF/DejaVuSans.ttf:" + \
-                            "fontsize=72:" + \
-                            "borderw=2:" + \
-                            "bordercolor=0x000000:" + \
-                            "fontcolor=0xFFFFFF",
-            self.gvf.params.filename + ".rendered.mp4"])
+        if "unit" in pluginparams.pluginparams:
+            unit = pluginparams.pluginparams["unit"].lower()
+            if unit == "metric_speed":
+                conv_func = lambda x: x * 3.6
+            elif unit == "imperial_speed":
+                conv_func = lambda x: x * 2.236936
+            elif unit == "temp_fahrenheit":
+                conv_func = lambda x: x * 9/5 + 32
+            
+        return conv_func
+
+
+    # description: returns a list of (value, duration) for a given tagname
+    def get_jsondata(self, pluginparams):
+        tagvalues = [ data[pluginparams.jsontag] for data in self.__jsondata['data'] \
+                                                          if pluginparams.jsontag in data ]
+        interval = self.__vp.duration / len(tagvalues)
+        conv_func = self.__get_unit_conversion(pluginparams)
+        retlist = [ (conv_func(value), interval) for value in tagvalues ]
         
-        if retval:
-            self.gvf.log("Rendering successfull, output file = " + \
-                         self.gvf.params.filename + ".rendered.mp4")
-        else:
-            self.gvf.log("Rendering failed")
+        # TODO: optimize: if value doesn't change
+        #       remove the element and modify duration of preceding element
         
-        return retval
-'''
+        return retlist
+
+
+    # description: call function in a given module with given arguments
+    def __call_plugin(self, module_name, function_name, *args):
+        try:
+            mod=importlib.import_module(module_name)
+        except:
+            raise Exception("Can't import module '%s'" % module_name)
+            
+        try:
+            fnc = getattr(mod, function_name)
+        except:
+            raise Exception("Module '%s' doesn't have a 'run' function" % mod)
+        
+        if not callable(fnc):
+            raise Exception("Can't call 'run' function of callable '%S'" % module_name)
+        
+        return fnc(*args)
+
+
+    def __get_xml_subtag_value(self, xmlnode, sublabelname, defaultvalue):
+        elements = xmlnode.getElementsByTagName(sublabelname)
+        return str(elements[0].firstChild.nodeValue) \
+                      if elements and elements[0].childNodes \
+                      else defaultvalue
+
+
+    def __get_next_chain_filename(self, index):
+        return self.__params.filename + ".filter_" + str(index) + ".mp4"
+
+
+    def run_plugins(self):
+        xmldoc = minidom.parse(self.__params.configfile)
+        xmlgpt = xmldoc.getElementsByTagName('goprotelemetry')[0]
+        
+        xmlpluginlist = xmlgpt.getElementsByTagName('plugin')
+        
+        retval = True
+        chain_index = 1
+        chain_infilename = self.__params.filename
+        chain_outfilename = self.__get_next_chain_filename(chain_index)
+        for xmlplugin in xmlpluginlist:
+            pluginlabel = self.__get_xml_subtag_value(xmlplugin, 'label', '[unnamed]')
+            pluginenabled = self.__get_xml_subtag_value(xmlplugin, 'enabled', 'false')
+            
+            if pluginenabled.lower() == "true":
+                self.logger.log("Found enabled plugin rendering " + pluginlabel)
+                
+                pluginparams = PluginParameters(self.logger)
+                pluginparams.parse_plugin_parameters(xmlplugin)
+                
+                plugindata = self.get_jsondata(pluginparams)
+                
+                retval = self.__call_plugin(pluginparams.pluginlib, "render", \
+                                            pluginparams, plugindata, self.__ffmpeg, \
+                                            chain_infilename, chain_outfilename)
+                
+                if not retval:
+                    break
+                
+                chain_index = chain_index + 1
+                chain_infilename = chain_outfilename
+                chain_outfilename = self.__get_next_chain_filename(chain_index)
+            else:
+                self.logger.log("Skipping disabled plugin rendering " + pluginlabel)
+        
+        if retval and chain_index > 1:
+            os.rename(chain_infilename, self.__outputfile)
 

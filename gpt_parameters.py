@@ -17,29 +17,32 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sys, getopt
-from ffmpeg import Logger
+from ffmpeg import FFmpegLogger
 
 class Parameters:
     def __init__(self):
         # default parameters
         self.filename = ""
+        self.configfile = "gpt_config.xml"
         self.overwrite = False
-        self.logger = Logger(Logger.verbosity_off)
+        self.logger = FFmpegLogger(FFmpegLogger.verbosity_off)
 
 
     def __usage(self):
         print("Usage: " + sys.argv[0] + " [OPTION]... inputfile\n"
               "Rerender input movie with speed and position on screen\n\n"
-              "  -o --overwrite      Overwrite generated files (default = no)\n"
-              "  -v --verbose        Display extra information while processing\n"
-              "  -vv                 Display extra information and subprocess output\n"
-              "  -h --help           Display help and exit\n")
+              "  -c --config       Configuration file (default = " + self.configfile + ")\n"
+              "  -o --overwrite    Overwrite generated files (default = no)\n"
+              "  -v --verbose      Display extra information while processing\n"
+              "  -vv               Display extra information and subprocess output\n"
+              "  -h --help         Display help and exit\n")
 
 
     # returns True if parameters could be parsed successfully
     def parse_commandline(self):
         try:
-            opts, args = getopt.getopt(sys.argv[1:], "ovh", [
+            opts, args = getopt.getopt(sys.argv[1:], "c:ovh", [
+                "config=",
                 "overwrite",
                 "verbose",
                 "help"])
@@ -50,6 +53,8 @@ class Parameters:
             if opt in ("-h", "--help"):
                 self.__usage()
                 return False
+            elif opt in ("-c", "--config"):
+                self.configfile = str(arg)
             elif opt in ("-o", "--overwrite"):
                 self.overwrite = True
             elif opt in ("-v", "--verbose"):
@@ -59,11 +64,12 @@ class Parameters:
         try:
             self.filename = args[0]
         except:
-            print("Nothing to do!")
+            self.logger.error("Nothing to do!")
             retval = False
 
         self.logger.log("Parameters:")
         self.logger.log("filename = " + self.filename)
+        self.logger.log("configuration file = " + self.configfile)
         self.logger.log("overwrite = " + str(self.overwrite))
         self.logger.log("verbosity level = " + str(self.logger.verbositylevel))
 

@@ -17,8 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sys, os
-from ffmpeg import Logger
-from ffmpeg import VideoProperties
+from ffmpeg import FFmpegLogger
 from ffmpeg import FFmpeg
 from gpt_parameters import Parameters
 from gpt_telemetry import Telemetry
@@ -31,32 +30,25 @@ if not params.parse_commandline():
 
 ffmpeg = FFmpeg(params.logger)
 
+# TODO: see if we have to concat other parts of the video
+#ffmpeg.gopro_concat_video(os.path.split(os.path.abspath(params.filename))[0])
+
 if not os.path.exists(params.filename):
-    print("Validation error: filename " + params.filename + " was not found")
+    params.logger.error("Validation error: filename " + params.filename + " was not found")
     sys.exit()
 
 if not ffmpeg.is_created_by_gopro(params.filename):
-    print("Validation error: file is not recorded with a GoPro camera")
+    params.logger.error("Validation error: file is not recorded with a GoPro camera")
     sys.exit()
 
 if not ffmpeg.contains_gopro_telemetry(params.filename):
-    print("Validation error: telemetry data not found")
-    sys.exit()
-
-retval, vp = ffmpeg.get_video_properties(params.filename)
-if not retval:
-    print("Validation error: amount of frames and framerate could not be detected")
+    params.logger.error("Validation error: telemetry data not found")
     sys.exit()
 
 telemetry = Telemetry(params, ffmpeg)
 
-telemetry.add_speed(telemetry.POS_BOTTOM_LEFT, telemetry.SPEED_IMAGE)
-telemetry.add_gps_location(telemetry.POS_BOTTOM_RIGHT)
-telemetry.add_altitude(telemetry.POS_CENTER_RIGHT)
-telemetry.add_temperature(telemetry.POS_TOP_RIGHT)
-telemetry.add_datetime(telemetry.POS_BOTTOM_CENTER)
+if not telemetry.initialized:
+    sys.exit()
 
-telemetry.generate_overlay()
-
-# TODO: add overlay to input file
+telemetry.run_plugins()
 
