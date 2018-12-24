@@ -10,12 +10,13 @@
             <vert>bottom</vert>
         </position>
         <params>
-            <type>text</type> <!-- or image -->
-            <unit>metric_speed</unit> <!-- or imperial_speed -->
+            <unit>metric_speed</unit>
+            <!--unit>imperial_speed</unit-->
         </params>
     </plugin>
     <plugin>
         <label>GPS location</label>
+        <!-- do not enable, not functional for the moment -->
         <enabled>false</enabled>
         <pluginlib>gpt_plugin_gps_location</pluginlib>
         <jsontag>lat,lon</jsontag>
@@ -50,7 +51,8 @@
             <vert>top</vert>
         </position>
         <params>
-            <unit>temp_celcius</unit> <!-- or temp_fahrenheit -->
+            <unit>temp_celcius</unit>
+            <!--unit>temp_fahrenheit</unit-->
         </params>
     </plugin>
     <plugin>
