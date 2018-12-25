@@ -9,7 +9,7 @@ Installation and configuration of these requirements can be found on their respe
 
 ## Configuration
 
-Gopro-telemetry will add each independent item using a plugin. For the moment there are plugins available to display speed, altitude, temperature and the date and time in UTC. However, they are limited to display the value as text for now.
+Gopro-telemetry will add each telemetry value using a plugin. There are plugins available to display speed, altitude, temperature and the date and time in UTC. However, for now they are limited to display the value as text.
 
 The configuration of the plugins can be done in the file gpt_config.xml, an example configuration is included in this repository. For each plugin there are a number of common parameters; these include the label, whether the plugin is enabled or not, the python module to load, the tag to look for in the telemetry json file and the position where the plugin should be displayed.
 
